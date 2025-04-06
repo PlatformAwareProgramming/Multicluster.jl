@@ -6,7 +6,8 @@ using MPIClusterManagers
 include("cluster.jl")
 include("remotecall.jl")
 
-export Cluster, Node,
+export Cluster, 
+       Node,
        addcluster, 
        addworkers,
        rmcluster,

@@ -39,18 +39,9 @@ function Distributed.remotecall_fetch(f, node_handle::Node, args...; kwargs...)
     remotecall_fetch(() -> remotecall_fetch(f, pid, args...; kwargs...), node_handle.cid)
 end
 
-
-#function gggg(pid,f,args,kwargs) remotecall_fetch(f, pid, args...; kwargs...) end
-
 function Distributed.remotecall_fetch(f, cluster_handle::Cluster, args...; kwargs...) 
     cid = cluster_handle.cid
-    @everywhere [cid] @eval using Multicluster
     remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), workers(role=:master)), cid)
-#    pids = workers(cluster_handle)
-#    @info "..... $args +++ $kwargs"
-#    remotecall_fetch(asyncmap, cid, pid -> 109#=remotecall_fetch(f, pid, args...; kwargs...)=#, pids)
- #   remotecall_fetch(asyncmap, cid, abs#=remotecall_fetch(f, pid, args...; kwargs...)=#, pids)
- #   remotecall_fetch(asyncmap, cid, gggg, pids, f, args, kwargs)
 end
 
 
@@ -99,7 +90,7 @@ function Distributed.remote_do(f, node_handle::Node, args...; kwargs...)
 end
 
 function Distributed.remote_do(f, cluster_handle::Cluster, args...; kwargs...) 
-    remote_do(() -> for w in workers() remote_do(f, w, args...; kwargs...) end, cluster_handle.cid)
+    remote_do(() -> for w in workers(role=:master) remote_do(f, w, args...; kwargs...) end, cluster_handle.cid)
 end
 
 # @spawn ???
@@ -107,42 +98,51 @@ end
 
 # @spawnat
 macro spawnat_cluster(cluster_handle, arg)
-  quote
-    f = @spawnat($cluster_handle.cid, asyncmap(w->@spawnat(w, $arg), workers(role=:master)))
-    $future_table[][f] = $cluster_handle.cid
-    f
-  end
+    quote
+        cid = $cluster_handle.cid
+        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), workers(role=:master)))
+        $future_table[][f] = cid
+        f
+    end
 end
 
 macro spawnat_node(node_handle, arg)
-  quote
-    f = @spawnat($node_handle.cid, @spawnat($node_handle.pid, $arg))
-    $future_table[][f] = $node_handle.cid
-    f
-  end 
+    quote
+        cid = $node_handle.cid
+        pid = $node_handle.pid
+        f = @spawnat(cid, @spawnat(esc($pid), $arg))
+        $future_table[][f] = cid
+        f
+    end 
 end
 
 # @fetchfrom
+macro fetchfrom_cluster(cluster_handle, arg)
+    quote
+        cid = $cluster_handle.cid
+        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg), workers(role=:master)))
+    end
+end
+
 macro fetchfrom_cluster(reducer, cluster_handle, arg)
     quote
-        @fetchfrom($cluster_handle.cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), workers(role=:master))))
+        cid = $cluster_handle.cid
+        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), workers(role=:master))))
     end
 end
 
 macro fetchfrom_node(node_handle, arg)
     quote
-      @fetchfrom($node_handle.cid, @fetchfrom($node_handle.pid, $arg))
+        cid = $node_handle.cid
+        pid = $node_handle.pid
+        @fetchfrom(cid, @fetchfrom($pid, $arg))
     end 
 end
   
 # @everywhere
 
 macro everywhere_cluster(clusters, arg)
-    esc(Expr(:call, :perform_everywhere_cluster, clusters, (Expr(:quote, arg))))
-#=    quote
-        procs = map(c->c.cid, $clusters)
-        @everywhere(procs, @everywhere(workers(role=:master), $arg))
-    end =#
+    esc(Expr(:call, :(Multicluster.perform_everywhere_cluster), clusters, (Expr(:quote, arg))))
 end
 
 function perform_everywhere_cluster(cluster::Cluster, ex)

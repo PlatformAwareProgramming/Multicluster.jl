@@ -36,8 +36,9 @@ function addcluster(access_node, nw; kwargs...)
     @info compute_node_args
 
     master_id = addprocs([access_node]; access_node_args...)
-    
+
     @everywhere master_id @eval using MPIClusterManagers
+    @everywhere master_id @eval using Multicluster
 
     MPI = get(kwargs, :MPI, true)
 

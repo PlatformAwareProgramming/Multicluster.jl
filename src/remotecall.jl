@@ -1,9 +1,9 @@
 
 
 
-function Multicluster.pmap(cluster_handle::Cluster, f, c...; kwargs...)
+function Distributed.pmap(cluster_handle::Cluster, f, c...; kwargs...)
     cid = cluster_handle.cid
-    remotecall_fetch(pmap, cid, f, c; kwargs)
+    remotecall_fetch(pmap, cid, f, c...; kwargs...)
 end
 
 # TODO: modify the @distributed macro in macros.jl
@@ -21,15 +21,15 @@ future_table = Ref(Dict{Future,Integer}())
 
 function Distributed.remotecall(f, node_handle::Node, args...; kwargs...) 
     pid = node_handle.pid
-    f = remotecall(() -> remotecall(f, pid, args...; kwargs...), node_handle.cid)
-    future_table[][f] = node_handle.cid
-    return f
+    r = remotecall(() -> remotecall(f, pid, args...; kwargs...), node_handle.cid)
+    future_table[][r] = node_handle.cid
+    return r
 end
 
 function Distributed.remotecall(f, cluster_handle::Cluster, args...; kwargs...) 
-    f = remotecall(() -> asyncmap(w -> remotecall(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
-    future_table[][f] = cluster_handle.cid
-    return f
+    r = remotecall(() -> asyncmap(w -> remotecall(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
+    future_table[][r] = cluster_handle.cid
+    return r
 end
 
 
@@ -39,8 +39,18 @@ function Distributed.remotecall_fetch(f, node_handle::Node, args...; kwargs...)
     remotecall_fetch(() -> remotecall_fetch(f, pid, args...; kwargs...), node_handle.cid)
 end
 
+
+#function gggg(pid,f,args,kwargs) remotecall_fetch(f, pid, args...; kwargs...) end
+
 function Distributed.remotecall_fetch(f, cluster_handle::Cluster, args...; kwargs...) 
-    remotecall_fetch(() -> asyncmap(w -> remotecall_fetch(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
+    cid = cluster_handle.cid
+    @everywhere [cid] @eval using Multicluster
+    remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), workers(role=:master)), cid)
+#    pids = workers(cluster_handle)
+#    @info "..... $args +++ $kwargs"
+#    remotecall_fetch(asyncmap, cid, pid -> 109#=remotecall_fetch(f, pid, args...; kwargs...)=#, pids)
+ #   remotecall_fetch(asyncmap, cid, abs#=remotecall_fetch(f, pid, args...; kwargs...)=#, pids)
+ #   remotecall_fetch(asyncmap, cid, gggg, pids, f, args, kwargs)
 end
 
 
@@ -52,15 +62,15 @@ end
 
 function Distributed.remotecall_wait(f, node_handle::Node, args...; kwargs...) 
     pid = node_handle.pid
-    f = remotecall_wait(() -> remotecall_wait(f, pid, args...; kwargs...), node_handle.cid)
-    future_table[][f] = node_handle.cid
-    return f
+    r = remotecall_wait(() -> remotecall_wait(f, pid, args...; kwargs...), node_handle.cid)
+    future_table[][r] = node_handle.cid
+    return r
 end
 
 function Distributed.remotecall_wait(f, cluster_handle::Cluster, args...; kwargs...) 
-    f = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
-    future_table[][f] = cluster_handle.cid
-    return f
+    r = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
+    future_table[][r] = cluster_handle.cid
+    return r
 end
 
 

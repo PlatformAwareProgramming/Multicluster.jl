@@ -6,7 +6,7 @@ mutable struct ClusterInfo
     nw::Integer
     access_node_args
     compute_node_args
-    contexts::Vector{Union{Nothing,Integer}}
+    contexts::Vector{Union{Nothing,Vector{Integer}}}
 end
 
 struct Cluster
@@ -17,15 +17,10 @@ end
 struct Node
     cid::Integer
     pid::Integer
-    function Node(cid, pid)
+    function Node(cluster_handle::Cluster, pid)
+        cid = cluster_handle.cid
         @assert haskey(cluster_table[], cid)
-        #@assert(@fetchfrom(cid, in(pid, workers(role=:master))))
-        try
-            b = remotecall_fetch(w -> in(w, workers(role=:master)), cid, pid)
-            @assert b
-        catch e
-            @info e
-        end        
+        @assert in(pid, reduce(vcat, filter(!isnothing, cluster_table[][cid].contexts)))
         new(cid, pid)
     end
 end
@@ -43,24 +38,17 @@ function addcluster(access_node, nw; kwargs...)
     master_id = addprocs([access_node]; access_node_args...)
     
     @everywhere master_id @eval using MPIClusterManagers
-    @everywhere master_id @eval using Distributed 
-
-    @info "master_id = $master_id"
 
     MPI = get(kwargs, :MPI, true)
 
-    @info "compute_node_args = $compute_node_args"
-
     wpids = if MPI 
-               remotecall_fetch(addprocs, master_id[1], MPIWorkerManager(nw); compute_node_args...)
+               Distributed.remotecall_fetch(addprocs, master_id[1], MPIWorkerManager(nw); compute_node_args...)
             else
                # TODO
                throw("not implemented")
             end
 
-    @info "pids ? $wpids"
-
-    cluster_table[][master_id[1]] = ClusterInfo(master_id[1], access_node, nw, access_node_args, compute_node_args, wpids)
+    cluster_table[][master_id[1]] = ClusterInfo(master_id[1], access_node, nw, access_node_args, compute_node_args, [wpids])
 
     return Cluster(master_id[1])
 end
@@ -68,16 +56,18 @@ end
 
 # create another team of worker processes accross the compute nodes of the cluster, but within another MPI context.
 # TODO: how to bind the contexts using intercommunicators ?
-function addworkers(cid, nw; MPI=true)
+function addworkers(cluster_handle::Cluster, nw; MPI=true)
+
+    cid = cluster_handle.cid
 
     wpids = if MPI 
-                remotecall_fetch(addprocs, master_id[1], MPIWorkerManager(nw), cluster_table[][cid].compute_node_args)
+                Distributed.remotecall_fetch(addprocs, cid, MPIWorkerManager(nw); cluster_table[][cid].compute_node_args...)
             else
                 # TODO
                 throw("not implemented")
             end
 
-    push!(cluster_table[][cid].contexts, [wpids])
+    push!(cluster_table[][cid].contexts, wpids)
 
     # return the index of the new context pids
     length(cluster_table[][cid].contexts)
@@ -86,22 +76,17 @@ end
 
 # nclusters
 
-function nclusters()
-    length(cluster_table[])
-end
+clusters() = map(Cluster, keys(cluster_table[]))
 
+nclusters() = length(cluster_table[])
 
-function nodes(cluster_handle::Cluster)
-    map(w->Node(cluster_handle.cid, w), @fetchfrom cluster_handle.cid workers(role=:master))
-end
+nodes(cluster_handle::Cluster) = map(w->Node(cluster_handle, w), reduce(vcat, filter(!isnothing, cluster_table[][cluster_handle.cid].contexts)))
 
+Distributed.nworkers(cluster_handle::Cluster; context=false) = nworkers(cluster_handle, Val(context))
 
+Distributed.nworkers(cluster_handle::Cluster, _::Val{true}) = map(x -> isnothing(x) ? 0 : length(x), cluster_table[][cluster_handle.cid].contexts)
 
-Distributed.nworkers(cluster_handle::Cluster; context=false) = nworkers(cluster_handle.cid, Val(context))
-
-Distributed.nworkers(cluster_handle::Cluster, _::Val{true}) = map(length, cluster_table[][cluster_handle.cid].contexts)
-
-Distributed.nworkers(cluster_handle::Cluster, _::Val{false}) = sum(nworkers(cluster_handle.cid), Val(false))
+Distributed.nworkers(cluster_handle::Cluster, _::Val{false}) = Distributed.remotecall_fetch(nworkers, cluster_handle.cid)
 
 
 # TODO: return handles to refer to the cluster nodes (integers ?)
@@ -115,45 +100,37 @@ Distributed.nworkers(cluster_handle::Cluster, _::Val{false}) = sum(nworkers(clus
 
 #end
 
-function Distributed.nprocs(cluster_handle::Cluster) 
-    remotecall_fetch(nprocs, cluster_handle.cid; role=:master)
-end
+
+Distributed.nprocs(cluster_handle::Cluster) = Distributed.remotecall_fetch(nprocs, cluster_handle.cid; role=:master)
     
+Distributed.procs(cluster_handle::Cluster) = Distributed.remotecall_fetch(procs, cluster_handle.cid; role=:master)
 
+Distributed.workers(cluster_handle::Cluster) = Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
 
-function clusters()
-    keys(cluster_table[])
-end
-
-function Distributed.procs(cluster_handle::Cluster) 
-    remotecall_fetch(procs, cluster_handle.cid; role=:master)
-end
-
-
-function Distributed.workers(cluster_handle::Cluster) 
-    remotecall_fetch(workers, cluster_handle.cid; role=:master)
-end
+contexts(cluster_handle::Cluster) = cluster_table[][cluster_handle.cid].contexts 
 
 # coworkers(cid) ???
 
 
-
-function rmcluster(cid)
-    wpids = remotecall_fetch(workers, cid, role=:master)
-    remotecall_fetch(rmprocs, cid, wpids)
+function rmcluster(cluster_handle::Cluster)
+    cid = cluster_handle.cid
+    contexts = cluster_table[][cid].contexts
+    wpids = reduce(vcat, filter(!isnothing, contexts); init=[])
+    Distributed.remotecall_fetch(rmprocs, cid, wpids)
     rmprocs(cid)
     delete!(cluster_table[], cid)
 end
 
-Distributed.rmprocs(cluster_handle::Cluster) = rmcluster(cluster_handle.cid) 
+Distributed.rmprocs(cluster_handle::Cluster) = rmcluster(cluster_handle) 
 
-function rmcluster(cid, context_id)
-    @assert length(cluster_table[][cid].contexts >= context_id)
-    @assert cluster_table[][cid].contexts[context_id] != nothing
-    wpids = cluster_table[][cid].contexts[context_id]
-    remotecall_fetch(rmprocs, cid, wpids)
-    rmprocs(cid)
-    cluster_table[][cid].contexts[context_id] = nothing
+function rmcluster(cluster_handle::Cluster, context_id)
+    cid = cluster_handle.cid
+    contexts = cluster_table[][cid].contexts
+    @assert length(contexts) >= context_id
+    @assert !isnothing(contexts[context_id])
+    wpids = contexts[context_id]
+    Distributed.remotecall_fetch(rmprocs, cid, wpids)
+    contexts[context_id] = nothing
 end
 
-Distributed.rmprocs(cluster_handle::Cluster, context_id) = rmcluster(cluster_handle.cid, context_id)
+Distributed.rmprocs(cluster_handle::Cluster, context_id) = rmcluster(cluster_handle, context_id)

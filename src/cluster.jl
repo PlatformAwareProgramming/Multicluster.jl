@@ -25,6 +25,18 @@ struct Node
     end
 end
 
+struct Ctx 
+    cid::Integer
+    xid::Integer
+    function Ctx(cid, xid) 
+        @assert haskey(cluster_table[], cid)
+        @assert xid <= length(cluster_table[][cid].contexts)
+        @assert !isnothing(cluster_table[][cid].contexts[xid])
+        new(cid, xid)
+    end
+end
+
+
 cluster_table = Ref(Dict{Integer,ClusterInfo}())
 
 function addcluster(access_node, nw; kwargs...)
@@ -106,7 +118,9 @@ Distributed.nprocs(cluster_handle::Cluster) = Distributed.remotecall_fetch(nproc
     
 Distributed.procs(cluster_handle::Cluster) = Distributed.remotecall_fetch(procs, cluster_handle.cid; role=:master)
 
-Distributed.workers(cluster_handle::Cluster) = Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
+Distributed.workers(cluster_handle::Cluster) = reduce(vcat, filter(!isnothing, cluster_table[][cluster_handle.cid].contexts)) # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
+
+Distributed.workers(cluster_handle::Ctx) = cluster_table[][cluster_handle.cid].contexts[cluster_handle.xid] # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
 
 contexts(cluster_handle::Cluster) = cluster_table[][cluster_handle.cid].contexts 
 

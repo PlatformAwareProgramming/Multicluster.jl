@@ -20,35 +20,59 @@ future_table = Ref(Dict{Future,Integer}())
 
 
 function Distributed.remotecall(f, node_handle::Node, args...; kwargs...) 
+    cid = cluster_handle.cid
     pid = node_handle.pid
-    r = remotecall(() -> remotecall(f, pid, args...; kwargs...), node_handle.cid)
-    future_table[][r] = node_handle.cid
+    r = remotecall(() -> remotecall(f, pid, args...; kwargs...), cid)
+    future_table[][r] = cid
     return r
 end
 
 function Distributed.remotecall(f, cluster_handle::Cluster, args...; kwargs...) 
-    r = remotecall(() -> asyncmap(w -> remotecall(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
-    future_table[][r] = cluster_handle.cid
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    r = remotecall(() -> asyncmap(w -> remotecall(f, w, args...; kwargs...), wids), cid)
+    future_table[][r] = cid
+    return r
+end
+
+function Distributed.remotecall(f, cluster_handle::Ctx, args...; kwargs...) 
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    r = remotecall(() -> asyncmap(w -> remotecall(f, w, args...; kwargs...), wids), cid)
+    future_table[][r] = cid
     return r
 end
 
 
-
 function Distributed.remotecall_fetch(f, node_handle::Node, args...; kwargs...) 
+    cid = cluster_handle.cid
     pid = node_handle.pid
-    remotecall_fetch(() -> remotecall_fetch(f, pid, args...; kwargs...), node_handle.cid)
+    remotecall_fetch(() -> remotecall_fetch(f, pid, args...; kwargs...), cid)
 end
 
 function Distributed.remotecall_fetch(f, cluster_handle::Cluster, args...; kwargs...) 
     cid = cluster_handle.cid
-    remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), workers(role=:master)), cid)
+    wids = workers(cluster_handle)
+    remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), wids), cid)
 end
 
+function Distributed.remotecall_fetch(f, cluster_handle::Ctx, args...; kwargs...)
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), wids), cid)
+end
 
 function Distributed.remotecall_fetch(reducer, f, cluster_handle::Cluster, args...; kwargs...) 
-    remotecall_fetch(() -> reduce(reducer, asyncmap(w -> remotecall_fetch(f, w, args...; kwargs...), workers(role=:master))), cluster_handle.cid)
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    remotecall_fetch(() -> reduce(reducer, asyncmap(w -> remotecall_fetch(f, w, args...; kwargs...), wids)), cid)
 end
 
+function Distributed.remotecall_fetch(reducer, f, cluster_handle::Ctx, args...; kwargs...) 
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    remotecall_fetch(() -> reduce(reducer, asyncmap(w -> remotecall_fetch(f, w, args...; kwargs...), wids)), cid)
+end
 
 
 function Distributed.remotecall_wait(f, node_handle::Node, args...; kwargs...) 
@@ -59,8 +83,18 @@ function Distributed.remotecall_wait(f, node_handle::Node, args...; kwargs...)
 end
 
 function Distributed.remotecall_wait(f, cluster_handle::Cluster, args...; kwargs...) 
-    r = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...), workers(role=:master)), cluster_handle.cid)
-    future_table[][r] = cluster_handle.cid
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    r = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...), wids), cid)
+    future_table[][r] = cid
+    return r
+end
+
+function Distributed.remotecall_wait(f, cluster_handle::Ctx, args...; kwargs...) 
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    r = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...),wids), cid)
+    future_table[][r] = cid
     return r
 end
 
@@ -90,7 +124,15 @@ function Distributed.remote_do(f, node_handle::Node, args...; kwargs...)
 end
 
 function Distributed.remote_do(f, cluster_handle::Cluster, args...; kwargs...) 
-    remote_do(() -> for w in workers(role=:master) remote_do(f, w, args...; kwargs...) end, cluster_handle.cid)
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    remote_do(() -> for w in wids remote_do(f, w, args...; kwargs...) end, cid)
+end
+
+function Distributed.remote_do(f, cluster_handle::Ctx, args...; kwargs...) 
+    cid = cluster_handle.cid
+    wids = workers(cluster_handle)
+    remote_do(() -> for w in wids remote_do(f, w, args...; kwargs...) end, cid)
 end
 
 # @spawn ???
@@ -100,7 +142,18 @@ end
 macro spawnat_cluster(cluster_handle, arg)
     quote
         cid = $cluster_handle.cid
-        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), workers(role=:master)))
+        wids = workers($cluster_handle)
+        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), $wids))
+        $future_table[][f] = cid
+        f
+    end
+end
+
+macro spawnat_context(cluster_handle, arg)
+    quote
+        cid = $cluster_handle.cid
+        wids = workers($cluster_handle)
+        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), $wids))
         $future_table[][f] = cid
         f
     end
@@ -120,14 +173,32 @@ end
 macro fetchfrom_cluster(cluster_handle, arg)
     quote
         cid = $cluster_handle.cid
-        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg), workers(role=:master)))
+        wids = workers($cluster_handle)
+        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg), $wids))
+    end
+end
+
+macro fetchfrom_context(cluster_handle, arg)
+    quote
+        cid = $cluster_handle.cid
+        wids = workers($cluster_handle)
+        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg),$wids))
     end
 end
 
 macro fetchfrom_cluster(reducer, cluster_handle, arg)
     quote
         cid = $cluster_handle.cid
-        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), workers(role=:master))))
+        wids = workers($cluster_handle)
+        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), $wids)))
+    end
+end
+
+macro fetchfrom_context(reducer, cluster_handle, arg)
+    quote
+        cid = $cluster_handle.cid
+        wids = workers($cluster_handle)
+        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), $wids)))
     end
 end
 

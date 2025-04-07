@@ -3,7 +3,7 @@
 mutable struct ClusterInfo 
     cid::Integer
     access_node_address::String
-    nw::Union{Nothing,Integer}
+    nw::Integer
     access_node_args
     compute_node_args
     contexts::Vector{Union{Nothing,Vector{Integer}}}
@@ -11,7 +11,7 @@ end
 
 struct Cluster
     cid::Integer
-    xid::Integer
+    xid::Union{Nothing,Integer}
     Cluster(cid) = (@assert haskey(cluster_table[], cid); new(cid, nothing))
     function Cluster(cid, xid) 
         @assert haskey(cluster_table[], cid)

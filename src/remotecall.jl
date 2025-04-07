@@ -35,14 +35,6 @@ function Distributed.remotecall(f, cluster_handle::Cluster, args...; kwargs...)
     return r
 end
 
-function Distributed.remotecall(f, cluster_handle::Ctx, args...; kwargs...) 
-    cid = cluster_handle.cid
-    wids = workers(cluster_handle)
-    r = remotecall(() -> asyncmap(w -> remotecall(f, w, args...; kwargs...), wids), cid)
-    future_table[][r] = cid
-    return r
-end
-
 
 function Distributed.remotecall_fetch(f, node_handle::Node, args...; kwargs...) 
     cid = cluster_handle.cid
@@ -56,19 +48,7 @@ function Distributed.remotecall_fetch(f, cluster_handle::Cluster, args...; kwarg
     remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), wids), cid)
 end
 
-function Distributed.remotecall_fetch(f, cluster_handle::Ctx, args...; kwargs...)
-    cid = cluster_handle.cid
-    wids = workers(cluster_handle)
-    remotecall_fetch(() -> asyncmap(pid -> remotecall_fetch(f, pid, args...; kwargs...), wids), cid)
-end
-
 function Distributed.remotecall_fetch(reducer, f, cluster_handle::Cluster, args...; kwargs...) 
-    cid = cluster_handle.cid
-    wids = workers(cluster_handle)
-    remotecall_fetch(() -> reduce(reducer, asyncmap(w -> remotecall_fetch(f, w, args...; kwargs...), wids)), cid)
-end
-
-function Distributed.remotecall_fetch(reducer, f, cluster_handle::Ctx, args...; kwargs...) 
     cid = cluster_handle.cid
     wids = workers(cluster_handle)
     remotecall_fetch(() -> reduce(reducer, asyncmap(w -> remotecall_fetch(f, w, args...; kwargs...), wids)), cid)
@@ -86,14 +66,6 @@ function Distributed.remotecall_wait(f, cluster_handle::Cluster, args...; kwargs
     cid = cluster_handle.cid
     wids = workers(cluster_handle)
     r = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...), wids), cid)
-    future_table[][r] = cid
-    return r
-end
-
-function Distributed.remotecall_wait(f, cluster_handle::Ctx, args...; kwargs...) 
-    cid = cluster_handle.cid
-    wids = workers(cluster_handle)
-    r = remotecall_wait(() -> asyncmap(w -> remotecall_wait(f, w, args...; kwargs...),wids), cid)
     future_table[][r] = cid
     return r
 end
@@ -129,27 +101,11 @@ function Distributed.remote_do(f, cluster_handle::Cluster, args...; kwargs...)
     remote_do(() -> for w in wids remote_do(f, w, args...; kwargs...) end, cid)
 end
 
-function Distributed.remote_do(f, cluster_handle::Ctx, args...; kwargs...) 
-    cid = cluster_handle.cid
-    wids = workers(cluster_handle)
-    remote_do(() -> for w in wids remote_do(f, w, args...; kwargs...) end, cid)
-end
-
 # @spawn ???
 
 
 # @spawnat
 macro spawnat_cluster(cluster_handle, arg)
-    quote
-        cid = $cluster_handle.cid
-        wids = workers($cluster_handle)
-        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), $wids))
-        $future_table[][f] = cid
-        f
-    end
-end
-
-macro spawnat_context(cluster_handle, arg)
     quote
         cid = $cluster_handle.cid
         wids = workers($cluster_handle)
@@ -178,23 +134,7 @@ macro fetchfrom_cluster(cluster_handle, arg)
     end
 end
 
-macro fetchfrom_context(cluster_handle, arg)
-    quote
-        cid = $cluster_handle.cid
-        wids = workers($cluster_handle)
-        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg),$wids))
-    end
-end
-
 macro fetchfrom_cluster(reducer, cluster_handle, arg)
-    quote
-        cid = $cluster_handle.cid
-        wids = workers($cluster_handle)
-        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), $wids)))
-    end
-end
-
-macro fetchfrom_context(reducer, cluster_handle, arg)
     quote
         cid = $cluster_handle.cid
         wids = workers($cluster_handle)
@@ -216,8 +156,9 @@ macro everywhere_cluster(clusters, arg)
     esc(Expr(:call, :(Multicluster.perform_everywhere_cluster), clusters, (Expr(:quote, arg))))
 end
 
-function perform_everywhere_cluster(cluster::Cluster, ex)
-    @everywhere [cluster.cid]  @everywhere(workers(role=:master), $ex)
+function perform_everywhere_cluster(cluster_handle::Cluster, ex)
+    wids = workers(cluster_handle)
+    @everywhere [cluster_handle.cid]  @everywhere($wids, $ex)
 end
 
 function perform_everywhere_cluster(clusters::Vector{Cluster}, ex)

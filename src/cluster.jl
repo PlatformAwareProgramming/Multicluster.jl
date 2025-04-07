@@ -3,7 +3,7 @@
 mutable struct ClusterInfo 
     cid::Integer
     access_node_address::String
-    nw::Integer
+    nw::Union{Nothing,Integer}
     access_node_args
     compute_node_args
     contexts::Vector{Union{Nothing,Vector{Integer}}}
@@ -11,7 +11,14 @@ end
 
 struct Cluster
     cid::Integer
-    Cluster(cid) = (@assert haskey(cluster_table[], cid); new(cid))
+    xid::Integer
+    Cluster(cid) = (@assert haskey(cluster_table[], cid); new(cid, nothing))
+    function Cluster(cid, xid) 
+        @assert haskey(cluster_table[], cid)
+        @assert xid <= length(cluster_table[][cid].contexts)
+        @assert !isnothing(cluster_table[][cid].contexts[xid])
+        new(cid, xid)
+    end
 end
 
 struct Node
@@ -22,17 +29,6 @@ struct Node
         @assert haskey(cluster_table[], cid)
         @assert in(pid, reduce(vcat, filter(!isnothing, cluster_table[][cid].contexts)))
         new(cid, pid)
-    end
-end
-
-struct Ctx 
-    cid::Integer
-    xid::Integer
-    function Ctx(cid, xid) 
-        @assert haskey(cluster_table[], cid)
-        @assert xid <= length(cluster_table[][cid].contexts)
-        @assert !isnothing(cluster_table[][cid].contexts[xid])
-        new(cid, xid)
     end
 end
 
@@ -95,7 +91,10 @@ nclusters() = length(cluster_table[])
 
 nodes(cluster_handle::Cluster) = map(w->Node(cluster_handle, w), reduce(vcat, filter(!isnothing, cluster_table[][cluster_handle.cid].contexts)))
 
-Distributed.nworkers(cluster_handle::Cluster; context=false) = nworkers(cluster_handle, Val(context))
+function Distributed.nworkers(cluster_handle::Cluster) 
+    context = !isnothing(cluster_handle.xid)
+    nworkers(cluster_handle, Val(context))
+end
 
 Distributed.nworkers(cluster_handle::Cluster, _::Val{true}) = map(x -> isnothing(x) ? 0 : length(x), cluster_table[][cluster_handle.cid].contexts)
 
@@ -118,9 +117,14 @@ Distributed.nprocs(cluster_handle::Cluster) = Distributed.remotecall_fetch(nproc
     
 Distributed.procs(cluster_handle::Cluster) = Distributed.remotecall_fetch(procs, cluster_handle.cid; role=:master)
 
-Distributed.workers(cluster_handle::Cluster) = reduce(vcat, filter(!isnothing, cluster_table[][cluster_handle.cid].contexts)) # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
+function Distributed.workers(cluster_handle::Cluster) 
+    context = !isnothing(cluster_handle.xid)
+    workers(cluster_handle, Val(context))
+end
 
-Distributed.workers(cluster_handle::Ctx) = cluster_table[][cluster_handle.cid].contexts[cluster_handle.xid] # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
+Distributed.workers(cluster_handle::Cluster, _::Val{false}) = reduce(vcat, filter(!isnothing, cluster_table[][cluster_handle.cid].contexts)) # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
+
+Distributed.workers(cluster_handle::Cluster, _::Val{true}) = cluster_table[][cluster_handle.cid].contexts[cluster_handle.xid] # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
 
 contexts(cluster_handle::Cluster) = cluster_table[][cluster_handle.cid].contexts 
 

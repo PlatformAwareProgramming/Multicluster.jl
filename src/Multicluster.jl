@@ -1,6 +1,7 @@
 module Multicluster
 
-using Distributed
+using Reexport
+@reexport using Distributed
 using MPIClusterManagers
 
 include("cluster.jl")
@@ -17,18 +18,18 @@ export Cluster,
        contexts,
 
        pmap,
-       @distributed_cluster,
+       @cluster_distributed,
        @distributed,
        @spawnat,
        remotecall,
        remotecall_wait,
        remotecall_fetch,
        remote_do,
-       fetch_cluster,
-       @spawnat_node,
-       @spawnat_cluster,
+       cluster_fetch,
+       @node_spawnat,
+       @cluster_spawnat,
        @fetchfrom_cluster,
        @fetchfrom_node,
-       @everywhere_cluster
+       @cluster_everywhere
 
 end # module Multicluster

@@ -57,7 +57,8 @@ function addcluster(access_node, nw; kwargs...)
                throw("not implemented")
             end
 
-    cluster_table[][master_id[1]] = ClusterInfo(master_id[1], access_node, nw, access_node_args, compute_node_args, [wpids])
+    cid = master_id[1]
+    cluster_table[][cid] = ClusterInfo(cid, access_node, nw, access_node_args, compute_node_args, [wpids])
 
     return Cluster(master_id[1])
 end
@@ -79,17 +80,20 @@ function addworkers(cluster_handle::Cluster, nw; MPI=true)
     push!(cluster_table[][cid].contexts, wpids)
 
     # return the index of the new context pids
-    length(cluster_table[][cid].contexts)
+    xid = length(cluster_table[][cid].contexts)
 
+    return Cluster(cid, xid)
 end
 
 # nclusters
 
-clusters() = map(Cluster, keys(cluster_table[]))
+clusters() = map(Cluster, collec(keys(cluster_table[])))
 
 nclusters() = length(cluster_table[])
 
 nodes(cluster_handle::Cluster) = map(w->Node(cluster_handle, w), reduce(vcat, filter(!isnothing, cluster_table[][cluster_handle.cid].contexts)))
+
+contexts(cluster_handle::Cluster) = cluster_table[][cluster_handle.cid].contexts 
 
 function Distributed.nworkers(cluster_handle::Cluster) 
     context = !isnothing(cluster_handle.xid)
@@ -112,11 +116,6 @@ Distributed.nworkers(cluster_handle::Cluster, _::Val{false}) = Distributed.remot
 
 #end
 
-
-Distributed.nprocs(cluster_handle::Cluster) = Distributed.remotecall_fetch(nprocs, cluster_handle.cid; role=:master)
-    
-Distributed.procs(cluster_handle::Cluster) = Distributed.remotecall_fetch(procs, cluster_handle.cid; role=:master)
-
 function Distributed.workers(cluster_handle::Cluster) 
     context = !isnothing(cluster_handle.xid)
     workers(cluster_handle, Val(context))
@@ -126,7 +125,11 @@ Distributed.workers(cluster_handle::Cluster, _::Val{false}) = reduce(vcat, filte
 
 Distributed.workers(cluster_handle::Cluster, _::Val{true}) = cluster_table[][cluster_handle.cid].contexts[cluster_handle.xid] # Distributed.remotecall_fetch(workers, cluster_handle.cid; role=:master)
 
-contexts(cluster_handle::Cluster) = cluster_table[][cluster_handle.cid].contexts 
+
+Distributed.nprocs(cluster_handle::Cluster) = Distributed.remotecall_fetch(nprocs, cluster_handle.cid; role=:master)
+    
+Distributed.procs(cluster_handle::Cluster) = Distributed.remotecall_fetch(procs, cluster_handle.cid; role=:master)
+
 
 # coworkers(cid) ???
 

@@ -9,7 +9,7 @@ end
 # TODO: modify the @distributed macro in macros.jl
 # Multicluster.@distributed(cid, …)
 
-macro distributed_cluster(cluster_handle, args...)
+macro cluster_distributed(cluster_handle, args...)
    # esc(quote
    #        @spawnat $cluster_handle.cid @distributed $args...
    #     end)
@@ -72,7 +72,7 @@ end
 
 
 # TODO: implement this behaviour directly in the fetch implementation
-function fetch_cluster(f)
+function cluster_fetch(f)
     if haskey(future_table[], f)
         r = fetch(f)
         asyncmap(x -> @fetchfrom(future_table[][f], fetch(x)), r)
@@ -81,7 +81,7 @@ function fetch_cluster(f)
     end
 end
 
-function fetch_cluster(reducer, f)
+function cluster_fetch(reducer, f)
     if haskey(future_table[], f)
         r = fetch(f)
         reduce(reducer, asyncmap(x -> @fetchfrom(future_table[][f], fetch(x)), r))
@@ -105,17 +105,17 @@ end
 
 
 # @spawnat
-macro spawnat_cluster(cluster_handle, arg)
+macro cluster_spawnat(cluster_handle, arg)
     quote
         cid = $cluster_handle.cid
         wids = workers($cluster_handle)
-        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), $wids))
+        f = @spawnat(cid, asyncmap(w->@spawnat(w, $arg), wids))
         $future_table[][f] = cid
         f
     end
 end
 
-macro spawnat_node(node_handle, arg)
+macro node_spawnat(node_handle, arg)
     quote
         cid = $node_handle.cid
         pid = $node_handle.pid
@@ -127,43 +127,48 @@ end
 
 # @fetchfrom
 macro fetchfrom_cluster(cluster_handle, arg)
-    quote
+    esc(quote
         cid = $cluster_handle.cid
         wids = workers($cluster_handle)
-        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg), $wids))
-    end
+        @fetchfrom(cid, asyncmap(w->@fetchfrom(w, $arg), wids))
+    end)
 end
 
 macro fetchfrom_cluster(reducer, cluster_handle, arg)
-    quote
+    esc(quote
         cid = $cluster_handle.cid
         wids = workers($cluster_handle)
-        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), $wids)))
-    end
+        @fetchfrom(cid, reduce($reducer, asyncmap(w->@fetchfrom(w, $arg), wids)))
+    end)
 end
 
 macro fetchfrom_node(node_handle, arg)
-    quote
+    esc(quote
         cid = $node_handle.cid
         pid = $node_handle.pid
-        @fetchfrom(cid, @fetchfrom($pid, $arg))
-    end 
+        @fetchfrom(cid, @fetchfrom(pid, $arg))
+    end) 
 end
   
 # @everywhere
 
-macro everywhere_cluster(clusters, arg)
-    esc(Expr(:call, :(Multicluster.perform_everywhere_cluster), clusters, (Expr(:quote, arg))))
+macro cluster_everywhere(clusters, arg)
+    esc(Expr(:call, :(Multicluster.perform_cluster_everywhere), clusters, (Expr(:quote, arg))))
 end
 
-function perform_everywhere_cluster(cluster_handle::Cluster, ex)
+function perform_cluster_everywhere(cluster_handle::Cluster, ex)
     wids = workers(cluster_handle)
-    @everywhere [cluster_handle.cid]  @everywhere($wids, $ex)
+    @everywhere [cluster_handle.cid] @everywhere($wids, $ex)
 end
 
-function perform_everywhere_cluster(clusters::Vector{Cluster}, ex)
+function perform_cluster_everywhere(clusters::Vector{Cluster}, ex)
     procs = map(c->c.cid, clusters)
-    @everywhere procs @everywhere(workers(role=:master), $ex)
+    contexts = Dict(map(c -> c.cid => workers(c), clusters))
+    @everywhere procs begin 
+        cid = myid(role=:worker)
+        wids = $contexts[cid]
+        @everywhere(wids, $ex)
+    end
 end
 
 

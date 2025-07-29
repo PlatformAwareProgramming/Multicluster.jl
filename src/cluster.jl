@@ -138,6 +138,7 @@ function rmcluster(cluster_handle::Cluster)
     cid = cluster_handle.cid
     contexts = cluster_table[][cid].contexts
     wpids = reduce(vcat, filter(!isnothing, contexts); init=[])
+    @info "cid=$cid, wpids=$wpids"
     Distributed.remotecall_fetch(rmprocs, cid, wpids)
     rmprocs(cid)
     delete!(cluster_table[], cid)

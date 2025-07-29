@@ -87,7 +87,7 @@ end
 
 # nclusters
 
-clusters() = map(Cluster, collec(keys(cluster_table[])))
+clusters() = map(Cluster, collect(keys(cluster_table[])))
 
 nclusters() = length(cluster_table[])
 

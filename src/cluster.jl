@@ -15,7 +15,7 @@ struct Cluster
     Cluster(cid) = (@assert haskey(cluster_table[], cid); new(cid, nothing))
     function Cluster(cid, xid) 
         @assert haskey(cluster_table[], cid)
-        @assert xid <= length(cluster_table[][cid].contexts)
+        @assert isnothing(xid) || xid <= length(cluster_table[][cid].contexts)
         @assert !isnothing(cluster_table[][cid].contexts[xid])
         new(cid, xid)
     end
